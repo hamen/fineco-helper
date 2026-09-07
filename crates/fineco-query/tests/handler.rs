@@ -329,6 +329,109 @@ fn dividends_name_the_missing_leg_and_still_total_the_gross() {
 }
 
 #[test]
+fn dividends_leave_an_event_with_no_net_out_of_both_sides_of_the_totals() {
+    // A withholding whose gross fell outside the window: its amount is real, but
+    // totalling it alone reports a net of -38.41 — the owner losing money on a
+    // dividend. The event stays in the list, named as unpaired; the totals say
+    // how many they left out instead of quoting a number that isn't income.
+    let mut store = Store::open_in_memory().expect("open");
+    store
+        .capture_movements(
+            "2026-06-03T10:00:00Z",
+            &[
+                dividend_leg("a", "DIR", "Rit.div.su AAA", -38.41),
+                dividend_leg("b", "DII", "Div.su BBB", 10.0),
+                dividend_leg("c", "DIR", "Rit.div.su BBB", -2.0),
+            ],
+            None,
+        )
+        .expect("capture");
+
+    let handler = QueryHandler::new(store, FreshnessMaxAge::default(), owner_policy());
+    match handler
+        .handle(Request::MovementsGetDividends, 0)
+        .expect("dividends served")
+    {
+        ResponseBody::Dividends(dto) => {
+            assert_eq!(dto.events.len(), 2);
+            assert_eq!(dto.totals.gross, 10.0);
+            assert_eq!(dto.totals.withholding, 2.0);
+            assert_eq!(dto.totals.net, 8.0);
+            assert_eq!(dto.totals.events_excluded, 1);
+            // The invariant the exclusion buys: the total is the sum of the nets.
+            let summed: f64 = dto.events.iter().filter_map(|event| event.net).sum();
+            assert_eq!(dto.totals.net, summed);
+        }
+        other => panic!("expected dividends, got {other:?}"),
+    }
+}
+
+#[test]
+fn dividends_totals_exclude_a_leg_the_capture_stored_without_an_amount() {
+    // `importo` is nullable in the store. The event already refuses to invent a
+    // zero; the totals have to refuse the same one, or the report contradicts
+    // itself in the field read first.
+    let mut store = Store::open_in_memory().expect("open");
+    let mut gross = dividend_leg("a", "DII", "Div.su AAA", 0.0);
+    gross.importo = None;
+    store
+        .capture_movements(
+            "2026-06-03T10:00:00Z",
+            &[gross, dividend_leg("b", "DIR", "Rit.div.su AAA", -38.41)],
+            None,
+        )
+        .expect("capture");
+
+    let handler = QueryHandler::new(store, FreshnessMaxAge::default(), owner_policy());
+    match handler
+        .handle(Request::MovementsGetDividends, 0)
+        .expect("dividends served")
+    {
+        ResponseBody::Dividends(dto) => {
+            assert_eq!(dto.events.len(), 1);
+            assert_eq!(dto.events[0].gross, None);
+            assert_eq!(dto.events[0].net, None);
+            assert_eq!(dto.totals.gross, 0.0);
+            assert_eq!(dto.totals.withholding, 0.0);
+            assert_eq!(dto.totals.net, 0.0);
+            assert_eq!(dto.totals.events_excluded, 1);
+        }
+        other => panic!("expected dividends, got {other:?}"),
+    }
+}
+
+#[test]
+fn dividends_read_a_lowercase_movement_code() {
+    // A casing change on `causaleMovimento` would drop the row entirely, and a
+    // report of no dividends is indistinguishable from a window that had none.
+    let mut store = Store::open_in_memory().expect("open");
+    store
+        .capture_movements(
+            "2026-06-03T10:00:00Z",
+            &[
+                dividend_leg("a", "dii", "Div.su 100 EXAMPLE SPA", 147.73),
+                dividend_leg("b", " DIR ", "Rit.div.su 100 EXAMPLE SPA", -38.41),
+            ],
+            None,
+        )
+        .expect("capture");
+
+    let handler = QueryHandler::new(store, FreshnessMaxAge::default(), owner_policy());
+    match handler
+        .handle(Request::MovementsGetDividends, 0)
+        .expect("dividends served")
+    {
+        ResponseBody::Dividends(dto) => {
+            assert_eq!(dto.events.len(), 1);
+            assert_eq!(dto.events[0].net, Some(109.32));
+            assert_eq!(dto.totals.net, 109.32);
+            assert_eq!(dto.totals.events_excluded, 0);
+        }
+        other => panic!("expected dividends, got {other:?}"),
+    }
+}
+
+#[test]
 fn dividends_are_denied_without_the_movements_capability() {
     // The report is computed from movements, so it carries the movements
     // capability: a policy without it must not reach the data by another name.

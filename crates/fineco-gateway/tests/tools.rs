@@ -318,6 +318,7 @@ fn default_connector_allowlist_is_valid_and_excludes_default_blocked_tools() {
         // Bank movements expose raw transaction amounts — excluded from connectors
         // by default (fail-safe; owner grants access by configuring an allowlist).
         "movements_get_latest",
+        "movements_get_dividends",
         "private_movements_refresh_live_sensitive",
     ] {
         assert!(

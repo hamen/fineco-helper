@@ -117,8 +117,11 @@ fn security_label(description: Option<&str>, prefix: &str) -> Option<String> {
     let trimmed = description?.trim();
     // Case-insensitive: a casing change in the bank's descriptions would
     // otherwise silently demote every row to an unlabelled one, with nothing in
-    // the output to say the labels had stopped resolving.
-    if !trimmed.to_lowercase().starts_with(&prefix.to_lowercase()) {
+    // the output to say the labels had stopped resolving. Compared ASCII-only,
+    // on the same bytes the slice below indexes: a lowercased copy is a
+    // different string, and the day a prefix picks up a `k`, U+212A KELVIN SIGN
+    // lowercases three bytes into one and the slice lands mid-character.
+    if !trimmed.get(..prefix.len())?.eq_ignore_ascii_case(prefix) {
         return None;
     }
     let label = trimmed[prefix.len()..].trim();
@@ -143,10 +146,7 @@ fn to_cents(amount: Option<f64>) -> Option<i64> {
     if cents.abs() > 9_007_199_254_740_991.0 {
         return None;
     }
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "bounded above; the value is a rounded, in-range integer"
-    )]
+    // Bounded above, and a rounded value: the cast cannot truncate here.
     Some(cents as i64)
 }
 
@@ -167,14 +167,21 @@ struct Group {
 /// Pair the dividend legs among `rows` into one event per security and date.
 ///
 /// Rows that carry no dividend code are ignored. Events are returned sorted by
-/// date, then kind, then security, so the output is stable across calls.
+/// date, then kind, then the security label — or, for a leg whose description
+/// carried none, its row id — so the output is stable across calls.
 #[must_use]
 pub fn pair_dividends(rows: &[MovementRow]) -> Vec<DividendEvent> {
     let mut groups: BTreeMap<(String, DividendKind, String), Group> = BTreeMap::new();
 
     for row in rows {
-        let code = row.causale_movimento.as_deref().unwrap_or_default();
-        let Some(&(_, leg, kind, prefix)) = LEGS.iter().find(|(c, ..)| *c == code) else {
+        // Trimmed and matched case-insensitively, for the same reason the
+        // prefix is: a `dii` or a trailing space would not demote the row to an
+        // unlabelled one, it would drop it, and a report that says "no
+        // dividends" is indistinguishable from a window that had none.
+        let code = row.causale_movimento.as_deref().unwrap_or_default().trim();
+        let Some(&(_, leg, kind, prefix)) =
+            LEGS.iter().find(|(c, ..)| c.eq_ignore_ascii_case(code))
+        else {
             continue;
         };
 

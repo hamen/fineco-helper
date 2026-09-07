@@ -1560,18 +1560,24 @@ pub struct MovementsDto {
 pub struct DividendsDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub captured_at: Option<String>,
-    /// Sums over the events below, with any side whose amount the capture did
-    /// not carry left out of the total.
+    /// Sums over the events below whose net could be worked out. An event
+    /// missing an amount is left out of both sides and counted in
+    /// `events_excluded`, so `net` is always the sum of the event nets.
     pub totals: DividendTotalsDto,
     pub events: Vec<DividendEventDto>,
 }
 
-/// Totals across every paired event in the capture.
+/// Totals across the events whose net could be worked out.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DividendTotalsDto {
     pub gross: f64,
     pub withholding: f64,
     pub net: f64,
+    /// How many events these totals leave out: those whose net is absent,
+    /// because a leg arrived with no amount or its counterpart fell outside the
+    /// captured window. Non-zero means the totals understate the real figures —
+    /// the excluded events are still listed below, with the missing side named.
+    pub events_excluded: usize,
 }
 
 /// One dividend: a security, an operation date, and both legs when the capture

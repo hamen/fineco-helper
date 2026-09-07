@@ -79,7 +79,7 @@ Gated live refresh (a real, rate-limited Fineco login; returns status only — r
 refreshed values via the cached tools afterward):
 
 - `private_portfolio_refresh_live_sensitive`, `private_orders_refresh_live_sensitive`,
-  `private_tax_refresh_live_sensitive`
+  `private_tax_refresh_live_sensitive`, `private_movements_refresh_live_sensitive`
 
 ## Run it / deploy it
 

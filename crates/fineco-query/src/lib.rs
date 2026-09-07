@@ -203,18 +203,32 @@ impl QueryHandler {
             .map_err(|_| SafeError::internal())?;
 
         let events = crate::dividends::pair_dividends(&rows);
+        // An event with no net — a leg the capture stored without an amount, or
+        // a withholding whose gross fell outside the window — is left out of the
+        // totals on BOTH sides. Counting the readable side alone would report
+        // money the other side denies: a lone withholding of 38.41 totals a net
+        // of -38.41, which reads as a loss in the field a caller asking "what
+        // did I make in dividends" looks at first. `events_excluded` is how the
+        // caller tells a total that omits money from a complete one, and keeping
+        // both sides out is what makes `totals.net` the sum of the event nets.
         // Summed as integer cents and converted once, so a long run of events
-        // cannot drift the way repeated float addition would. A side the capture
-        // did not carry is left out rather than counted as zero.
-        let gross_cents: i64 = events.iter().filter_map(|event| event.gross_cents).sum();
-        let withholding_cents: i64 = events
-            .iter()
-            .filter_map(|event| event.withholding_cents)
-            .sum();
+        // cannot drift the way repeated float addition would.
+        let (gross_cents, withholding_cents, events_excluded) = events.iter().fold(
+            (0_i64, 0_i64, 0_usize),
+            |(gross, withholding, excluded), event| match event.net_cents {
+                Some(_) => (
+                    gross + event.gross_cents.unwrap_or(0),
+                    withholding + event.withholding_cents.unwrap_or(0),
+                    excluded,
+                ),
+                None => (gross, withholding, excluded + 1),
+            },
+        );
         let totals = DividendTotalsDto {
             gross: cents_to_euros(gross_cents),
             withholding: cents_to_euros(withholding_cents),
             net: cents_to_euros(gross_cents - withholding_cents),
+            events_excluded,
         };
 
         let events = events
@@ -491,10 +505,9 @@ fn shareable_row_dto(row: ShareableRow) -> ShareableRowDto {
 }
 
 /// Integer cents to the € amounts the movements surface uses elsewhere.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "cent counts on a retail account are far inside f64's exact integer range"
-)]
+///
+/// Cent counts on a retail account are far inside f64's exact integer range, so
+/// the cast loses nothing.
 fn cents_to_euros(cents: i64) -> f64 {
     cents as f64 / 100.0
 }
